@@ -1,632 +1,701 @@
-# OPC Implementation Plan
+# OPC Implementation Checklist
 
-## Overview
-
-This document breaks down the OPC PRD into actionable implementation phases with concrete technical decisions, file-level breakdowns, dependencies, complexity estimates, and testing strategies.
+> Aligned to [PRD.md](./PRD.md). Each checkbox maps to a concrete deliverable.
+> Mark `[x]` when implemented and verified.
 
 ---
 
 ## Phase 1: Foundation Skeleton
 
+**PRD Ref**: §1 Core Architecture, §2 Agent Hierarchy Model, §8 Project Structure
+
 **Goal**: Monorepo setup, type system, config parsing, agent registry, CLI scaffolding.
 
-**Estimated Complexity**: Low-Medium (~1 week)
+### 1.1 Monorepo Setup
 
-### Technical Decisions
-- **Monorepo tool**: pnpm workspaces + Turborepo (fast incremental builds, well-supported)
-- **Schema validation**: Zod (runtime validation + TypeScript type inference)
-- **YAML parsing**: `yaml` package (full YAML 1.2 spec support)
-- **CLI framework**: `commander` (lightweight, widely adopted)
-- **Build tool**: `tsup` (fast esbuild-based bundler for libraries)
-- **Testing**: Vitest (fast, native ESM, Vite-compatible)
+- [ ] Initialize pnpm workspace (`pnpm-workspace.yaml`)
+- [ ] Configure Turborepo (`turbo.json`) with build/test/lint pipelines
+- [ ] Create shared `tsconfig.base.json`
+- [ ] Configure `tsup` as build tool for library packages
+- [ ] Configure Vitest as test runner
+- [ ] Create package scaffolds: `@opc/core`, `@opc/cli`
 
-### File Breakdown
+### 1.2 Type System (`@opc/core/types.ts`)
 
-```
-opc/
-  package.json                     # Root workspace config
-  pnpm-workspace.yaml             # Workspace packages definition
-  turbo.json                       # Turborepo pipeline config
-  tsconfig.base.json              # Shared TS config
+- [ ] `AgentDefinition` — role, level, parent, children, model, tools, prompt path
+- [ ] `MemoryBlockDefinition` — label, description, value, limit
+- [ ] `MemoryConfig` — blocks, recall, archival, shareWith, sharedBlocks
+- [ ] `ExecutionConfig` — maxConcurrentAgents, maxHierarchyDepth, taskTimeout, resultCompressionThreshold
+- [ ] `FrameworkConfig` — name, defaultModel, memory, execution, privacy
+- [ ] `ChannelConfig` — adapter reference per platform
+- [ ] `SharedBlockDefinition` — description, value, limit, readOnly
+- [ ] `TaskContext` — taskId, parentTaskId, agentId, description, status
+- [ ] `MemoryProvenance` — author, taskId, threadId, timestamp, parentTaskId, source, contentHash
+- [ ] `PIIType` enum — PERSON_NAME, EMAIL, PHONE, CREDIT_CARD, API_KEY, ADDRESS, SSN, IP_ADDRESS
+- [ ] `EscalationResult` — type (error|timeout|uncertainty|approval_needed), reason, partialResult
 
-  packages/
-    core/
-      package.json                 # @opc/core
-      tsconfig.json
-      tsup.config.ts
-      src/
-        types.ts                   # AgentDefinition, MemoryBlock, TaskContext, Provenance,
-                                   # MemoryConfig, ExecutionConfig, PIIType, etc.
-        config.ts                  # YAML loader + Zod schema (frameworkSchema, agentSchema,
-                                   # channelSchema, sharedBlockSchema)
-        registry.ts                # AgentRegistry class: parse topology, build adjacency graph,
-                                   # validate (no cycles via DFS, no orphans, shareWith level check,
-                                   # leaf-no-delegate, sharedBlocks existence)
-        index.ts                   # Public API exports
-      __tests__/
-        config.test.ts             # Schema validation: valid/invalid configs, edge cases
-        registry.test.ts           # Topology validation: cycles, orphans, shareWith, depth limits
+### 1.3 Config Parser (`@opc/core/config.ts`)
 
-    cli/
-      package.json                 # @opc/cli
-      tsconfig.json
-      src/
-        index.ts                   # CLI entry point (commander setup)
-        commands/
-          init.ts                  # Scaffold opc.config.yaml + agents/ directory
-          validate.ts              # Load config, run registry validation, report errors
-          visualize.ts             # Print agent tree to terminal (tree-like ASCII output)
-```
+- [ ] YAML loader using `yaml` package
+- [ ] Zod schema: `frameworkSchema` (name, defaultModel, memory, execution, privacy)
+- [ ] Zod schema: `agentSchema` (role, level, parent, children, tools, model, memory, prompt)
+- [ ] Zod schema: `channelSchema` (adapter reference)
+- [ ] Zod schema: `sharedBlockSchema` (description, value, limit, readOnly)
+- [ ] Zod schema: `privacyConfigSchema` (enabled, detectTypes, whitelist, confidenceThreshold, mode)
+- [ ] Top-level `opcConfigSchema` composing all sub-schemas
+- [ ] `loadConfig(path)` — reads YAML, parses, validates, returns typed config
+- [ ] Clear error messages on validation failure (path to invalid field + reason)
 
-### Dependencies Between Files
-- `cli/commands/*` -> `core/config.ts` -> `core/types.ts`
-- `cli/commands/validate.ts` -> `core/registry.ts`
+### 1.4 Agent Registry (`@opc/core/registry.ts`)
 
-### Testing Strategy
-- Unit tests for Zod schema: valid configs pass, invalid configs produce clear errors
-- Unit tests for AgentRegistry: cycle detection, orphan detection, shareWith validation, depth limits
-- CLI integration tests: `opc init` creates expected files, `opc validate` catches errors
+- [ ] `AgentRegistry` class: parse agent definitions from config
+- [ ] Build adjacency graph (parent-child relationships)
+- [ ] Validate: no cycles (DFS-based cycle detection)
+- [ ] Validate: no orphans (all agents reachable from root)
+- [ ] Validate: `shareWith` only between agents at same level
+- [ ] Validate: leaf agents (no children) do NOT have `delegate`/`delegateParallel` tools
+- [ ] Validate: `sharedBlocks` references exist in top-level `sharedBlocks` definition
+- [ ] Validate: `maxHierarchyDepth` not exceeded
+- [ ] Validate: exactly one root agent (level 0)
+- [ ] `getAgent(id)` — returns AgentDefinition
+- [ ] `getChildren(id)` — returns child agent IDs
+- [ ] `getParent(id)` — returns parent agent ID
+- [ ] `getAncestors(id)` — returns ancestor chain
+- [ ] `isDescendant(agentId, ancestorId)` — hierarchy check
 
-### Exit Criteria
-- [ ] `pnpm install` works across all packages
-- [ ] `opc init` generates a valid starter config
-- [ ] `opc validate` catches all topology errors (cycles, orphans, invalid refs)
-- [ ] All types exported and usable from `@opc/core`
+### 1.5 CLI (`@opc/cli`)
+
+- [ ] CLI entry point using `commander`
+- [ ] `opc init` — scaffold `opc.config.yaml` + `agents/` directory with example prompts
+- [ ] `opc validate` — load config → run all registry validations → report errors
+- [ ] `opc visualize` — print agent hierarchy as ASCII tree in terminal
+
+### 1.6 Tests — Phase 1
+
+- [ ] `config.test.ts` — valid configs pass, invalid configs produce clear errors
+- [ ] `config.test.ts` — edge cases: missing fields, extra fields, wrong types
+- [ ] `registry.test.ts` — cycle detection catches circular parent-child refs
+- [ ] `registry.test.ts` — orphan detection catches unreachable agents
+- [ ] `registry.test.ts` — shareWith validation (same level only)
+- [ ] `registry.test.ts` — leaf-no-delegate validation
+- [ ] `registry.test.ts` — sharedBlocks reference validation
+- [ ] `registry.test.ts` — depth limit validation
+- [ ] CLI integration: `opc init` creates expected files
+- [ ] CLI integration: `opc validate` catches all error types
 
 ---
 
 ## Phase 2: Privacy Gateway
 
-**Goal**: PII detection, masking, and restoration pipeline that transparently wraps LLM calls.
+**PRD Ref**: §4 Privacy Gateway
 
-**Estimated Complexity**: Medium-High (~1.5 weeks)
+**Goal**: PII detection, masking, restoration pipeline. Transparent to agents.
 
 **Depends on**: Phase 1 (types)
 
-### Technical Decisions
-- **Regex PII detection**: `open-redaction` (570+ patterns, maintained)
-- **NER PII detection**: `@nicepkg/pii-paladin` or equivalent transformers.js-based NER (BERT ONNX, ~400MB, downloaded on demand)
-- **Fake data generation**: `@faker-js/faker` (comprehensive, seeded for consistency)
-- **Streaming buffer**: Custom implementation using TextDecoder chunking at token boundaries
+### 2.1 Types (`@opc/privacy/types.ts`)
 
-### File Breakdown
+- [ ] `PIIType` enum (PERSON_NAME, EMAIL, PHONE, CREDIT_CARD, API_KEY, ADDRESS, SSN, IP_ADDRESS, JWT, SSH_KEY)
+- [ ] `DetectionResult` — value, type, confidence, startIndex, endIndex
+- [ ] `VaultEntry` — realValue, fakeValue, entityType
+- [ ] `PrivacyConfig` — enabled, detectTypes, whitelist, confidenceThreshold, mode (mask|redact|route)
+- [ ] `MaskMode` type: `'mask' | 'redact' | 'route'`
 
-```
-packages/
-  privacy/
-    package.json                   # @opc/privacy
-    tsconfig.json
-    tsup.config.ts
-    src/
-      types.ts                     # PIIType enum, DetectionResult, VaultEntry, PrivacyConfig,
-                                   # MaskMode ('mask' | 'redact' | 'route')
-      detector.ts                  # PIIDetector class:
-                                   #   - detectStructured(text): regex-based (OpenRedaction)
-                                   #   - detectUnstructured(text): NER-based (transformers.js)
-                                   #   - detect(text): merge + deduplicate detections
-                                   #   - Lazy model loading (NER model downloaded on first call)
-                                   #   - Confidence threshold filtering
-      substitutor.ts               # PIISubstitutor class:
-                                   #   - generate(type, seed): type-preserving fake via Faker
-                                   #   - Seeded Faker instance for session consistency
-      vault.ts                     # PrivacyVault class:
-                                   #   - getOrCreate(realValue, type): idempotent mapping
-                                   #   - restore(maskedText): longest-match-first restoration
-                                   #   - clear(): session cleanup
-                                   #   - Bidirectional Map<real, fake> + Map<fake, real>
-      gateway.ts                   # PrivacyGateway class:
-                                   #   - mask(text): detect -> substitute -> return masked text
-                                   #   - unmask(text): vault.restore()
-                                   #   - wrapQuery(queryFn): higher-order function wrapping query()
-                                   #   - Whitelist filtering
-                                   #   - Code block conservative mode
-      stream-handler.ts            # StreamRestorer class:
-                                   #   - pipe(stream): buffer chunks, restore at token boundaries
-                                   #   - Handles partial fake-data tokens across chunk boundaries
-      hooks.ts                     # Claude Agent SDK hook integration:
-                                   #   - privacyMaskHook (PreToolUse)
-                                   #   - privacyUnmaskHook (PostToolUse)
-      index.ts                     # Public API exports
-    __tests__/
-      detector.test.ts             # PII detection accuracy per type, confidence thresholds
-      vault.test.ts                # Bidirectional mapping, session consistency, longest match
-      gateway.test.ts              # End-to-end mask/unmask, whitelist, code block handling
-      stream-handler.test.ts       # Streaming restoration, chunk boundary handling
-```
+### 2.2 PII Detector (`@opc/privacy/detector.ts`)
 
-### Key Implementation Details
-- **Longest match restoration**: Sort vault entries by key length descending before replacement
-- **Code block detection**: Regex to identify fenced code blocks; apply conservative detection within them
-- **Lazy NER loading**: First call to `detectUnstructured()` triggers model download; subsequent calls use cached model
-- **Whitelist**: Pre-filter detections before substitution
+- [ ] `detectStructured(text)` — regex-based detection using OpenRedaction (570+ patterns)
+- [ ] Structured detection: email, phone, credit card (Luhn), API key, JWT, SSH key, IP address, SSN
+- [ ] `detectUnstructured(text)` — NER-based detection via transformers.js (BERT ONNX)
+- [ ] NER detection: person names, organization names, addresses
+- [ ] Lazy model loading: NER model (~400MB) downloaded on first call, cached for subsequent use
+- [ ] `detect(text)` — merge structured + unstructured, deduplicate overlapping detections
+- [ ] Confidence threshold filtering (configurable, default 0.85)
+- [ ] Whitelist filtering: skip detections matching whitelisted terms
 
-### Testing Strategy
-- Unit tests per PII type (email, phone, credit card, API key, names, etc.)
-- Vault consistency: same input always maps to same output within session
-- Round-trip tests: mask -> unmask produces original text
-- Streaming tests: chunked input with fake data spanning chunk boundaries
-- Whitelist tests: whitelisted terms are never masked
-- Code block tests: PII in code blocks uses conservative strategy
+### 2.3 Substitutor (`@opc/privacy/substitutor.ts`)
 
-### Exit Criteria
-- [ ] Detects all configured PII types with >85% precision
-- [ ] Round-trip mask/unmask preserves original text exactly
-- [ ] Streaming restoration handles chunk boundaries correctly
-- [ ] Whitelist exclusion works
-- [ ] NER model downloads on demand, cached for subsequent use
+- [ ] `generate(type, seed)` — type-preserving fake data via Faker.js
+- [ ] Type preservation: name→name, email→email, phone→phone, address→address, etc.
+- [ ] Seeded Faker instance: `faker.seed()` for session-level consistency
+
+### 2.4 Vault (`@opc/privacy/vault.ts`)
+
+- [ ] `PrivacyVault` class with session-scoped `Map<real, fake>` + `Map<fake, real>`
+- [ ] `getOrCreate(realValue, type)` — idempotent: same real value always returns same fake
+- [ ] `restore(maskedText)` — longest-match-first restoration (sort by key length descending)
+- [ ] `clear()` — session cleanup, vault not persisted
+- [ ] `entityTypes` map: track `real → PIIType` for each mapping
+
+### 2.5 Gateway (`@opc/privacy/gateway.ts`)
+
+- [ ] `mask(text)` — detect → substitute → return masked text
+- [ ] `unmask(text)` — vault.restore()
+- [ ] `wrapQuery(queryFn)` — higher-order function wrapping agent `query()` calls
+- [ ] Whitelist pre-filtering before substitution
+- [ ] Code block conservative mode: only replace obvious keys/connection strings within fenced code blocks
+- [ ] Support for `redact` mode: replace PII with `[REDACTED]` instead of fake data
+
+### 2.6 Stream Handler (`@opc/privacy/stream-handler.ts`)
+
+- [ ] `StreamRestorer` class: pipe streaming response through vault restoration
+- [ ] Buffer chunks to token boundaries before replacement
+- [ ] Handle partial fake-data tokens spanning chunk boundaries
+
+### 2.7 SDK Integration (`@opc/privacy/hooks.ts`)
+
+- [ ] `privacyMaskHook` — PreToolUse hook for Claude Agent SDK
+- [ ] `privacyUnmaskHook` — PostToolUse hook for Claude Agent SDK
+- [ ] Transparent injection: agents are unaware of masking
+
+### 2.8 Tests — Phase 2
+
+- [ ] `detector.test.ts` — detection accuracy per PII type (email, phone, CC, API key, names, etc.)
+- [ ] `detector.test.ts` — confidence threshold filtering works
+- [ ] `detector.test.ts` — whitelist exclusion works
+- [ ] `vault.test.ts` — bidirectional mapping consistency within session
+- [ ] `vault.test.ts` — longest-match-first restoration (e.g., "Zhang Sanfeng" before "Zhang San")
+- [ ] `gateway.test.ts` — round-trip: mask → unmask produces original text exactly
+- [ ] `gateway.test.ts` — code block conservative strategy
+- [ ] `gateway.test.ts` — redact mode replaces with `[REDACTED]`
+- [ ] `stream-handler.test.ts` — streaming restoration across chunk boundaries
 
 ---
 
 ## Phase 3: Memory System
 
-**Goal**: Full memory stack — Core blocks, Recall (dual-write + hybrid search), ACL, provenance.
+**PRD Ref**: §5 Memory System (§4.1–§4.5 in PRD subsections)
 
-**Estimated Complexity**: High (~2 weeks)
+**Goal**: Core Memory blocks, Recall Memory (dual-write + hybrid search), ACL, provenance.
 
 **Depends on**: Phase 1 (types, config)
 
-### Technical Decisions
-- **SQLite**: `better-sqlite3` (synchronous, fast, zero external deps)
-- **Vector search**: `sqlite-vec` extension (native SQLite vector similarity)
-- **Full-text search**: SQLite FTS5 (built-in, BM25 scoring)
-- **Embedding**: `@xenova/transformers` (transformers.js, all-MiniLM-L6-v2 ONNX, ~100MB)
-- **Hybrid retrieval**: Reciprocal Rank Fusion (k=60) merging vector + BM25 results
+### 3.1 Storage Adapter Interface (`@opc/memory/adapters/adapter.ts`)
 
-### File Breakdown
+- [ ] `StorageAdapter` interface: CRUD for blocks, recall entries, semantic facts, provenance
+- [ ] Method signatures for vector search, BM25 search, batch operations
 
-```
-packages/
-  memory/
-    package.json                   # @opc/memory
-    tsconfig.json
-    tsup.config.ts
-    src/
-      types.ts                     # MemoryBlock, RecallEntry, SemanticFact, SearchResult,
-                                   # MemoryProvenance, Namespace, ACLPermission
-      embedding.ts                 # EmbeddingProvider interface + implementations:
-                                   #   - LocalEmbedding (transformers.js, lazy model load)
-                                   #   - OpenAIEmbedding (API-based)
-                                   #   - VoyageEmbedding (API-based)
-                                   #   Factory: createEmbeddingProvider(config)
-      blocks.ts                    # MemoryBlockStore class:
-                                   #   - get/set/update block by agent + label
-                                   #   - Optimistic locking via version column
-                                   #   - readOnly enforcement
-                                   #   - Character limit validation
-                                   #   - Shared block support (agentId = null)
-      recall.ts                    # RecallMemory class:
-                                   #   - write(message): sync SQL + async vector embedding
-                                   #   - search(query, agentId): hybrid vector + BM25
-                                   #   - Role-based embedding format
-                                   #   - Content hash dedup
-      hybrid-search.ts             # HybridSearch class:
-                                   #   - vectorSearch(query, k): sqlite-vec cosine similarity
-                                   #   - bm25Search(query, k): FTS5
-                                   #   - fuse(vectorResults, bm25Results, k): RRF (k=60)
-      acl.ts                       # MemoryACL class:
-                                   #   - checkPermission(requester, target, operation): bool
-                                   #   - Namespace parsing: /org/agent/{id}/{tier}
-                                   #   - Rules: self=full, child=read+write, parent=none,
-                                   #     sibling=shareWith only
-                                   #   - Shared block: referenced=read, !readOnly=write
-      provenance.ts                # ProvenanceTracker:
-                                   #   - attach(entry, metadata): add provenance to memory entry
-                                   #   - query(filters): search by author, taskId, threadId
-                                   #   - Content hash generation (MD5)
-      adapters/
-        adapter.ts                 # StorageAdapter interface (CRUD for blocks, recall, semantic)
-        sqlite.ts                  # SQLiteAdapter class:
-                                   #   - Schema: blocks, recall_messages, recall_vectors,
-                                   #     semantic_facts, semantic_vectors, provenance
-                                   #   - sqlite-vec for vector ops
-                                   #   - FTS5 virtual table for BM25
-                                   #   - Migration runner
-      index.ts                     # MemorySystem facade: init, getBlocks, getRecall, etc.
-    __tests__/
-      blocks.test.ts               # CRUD, optimistic lock conflicts, readOnly, shared blocks
-      recall.test.ts               # Write + search, hybrid retrieval accuracy, dedup
-      hybrid-search.test.ts        # RRF fusion correctness, ranking quality
-      acl.test.ts                  # Full permission matrix (self/child/parent/sibling x read/write)
-      provenance.test.ts           # Metadata attachment and querying
-      sqlite.test.ts               # Adapter: schema creation, migrations, CRUD operations
-```
+### 3.2 SQLite Adapter (`@opc/memory/adapters/sqlite.ts`)
 
-### Key Implementation Details
-- **SQLite schema**: Single database file per OPC instance. Tables: `memory_blocks`, `recall_messages`, `recall_vectors` (sqlite-vec virtual table), `semantic_facts`, `provenance`
-- **Async embedding**: After synchronous SQL write, queue embedding job. Use a simple in-process task queue (no external deps).
-- **RRF formula**: `score = sum(1 / (k + rank_i))` where k=60, across vector and BM25 result sets
-- **ACL enforcement**: Middleware layer that wraps all memory reads/writes; checks namespace permissions before executing
+- [ ] `SQLiteAdapter` class using `better-sqlite3`
+- [ ] Schema: `memory_blocks` table (id, label, description, value, limit, readOnly, version, agentId)
+- [ ] Schema: `recall_messages` table (id, agentId, role, content, threadId, timestamp, contentHash, processed)
+- [ ] Schema: `recall_vectors` virtual table (sqlite-vec for cosine similarity)
+- [ ] Schema: `recall_fts` virtual table (FTS5 for BM25)
+- [ ] Schema: `semantic_facts` table (id, agentId, fact, validTime, recordedTime, contentHash, namespace)
+- [ ] Schema: `semantic_vectors` virtual table (sqlite-vec)
+- [ ] Schema: `provenance` table (entryId, entryType, author, taskId, threadId, timestamp, parentTaskId, source, contentHash)
+- [ ] Migration runner for schema versioning
+- [ ] Zero external dependencies (SQLite + extensions only)
 
-### Testing Strategy
-- Unit tests for each memory tier independently
-- ACL: exhaustive combinatorial tests (all requester/target/operation combinations)
-- Hybrid search: test that combining vector + BM25 outperforms either alone on synthetic queries
-- Optimistic locking: concurrent write conflict detection
-- Integration: full flow from block edit -> recall write -> search -> ACL filtering
+### 3.3 Embedding Provider (`@opc/memory/embedding.ts`)
 
-### Exit Criteria
-- [ ] Memory blocks: CRUD with optimistic locking works
-- [ ] Recall: dual-write + hybrid search returns relevant results
-- [ ] ACL: all permission matrix combinations pass
-- [ ] Provenance: entries carry correct metadata
-- [ ] SQLite adapter handles all operations with zero external dependencies
+- [ ] `EmbeddingProvider` interface: `embed(text): Promise<number[]>`, `embedBatch(texts): Promise<number[][]>`
+- [ ] `LocalEmbedding` — transformers.js + all-MiniLM-L6-v2 ONNX (~100MB, auto-download on first use)
+- [ ] `OpenAIEmbedding` — OpenAI API (text-embedding-3-small, configurable dimensions)
+- [ ] `VoyageEmbedding` — Voyage API
+- [ ] `createEmbeddingProvider(config)` — factory function based on config
+
+### 3.4 Core Memory Blocks (`@opc/memory/blocks.ts`)
+
+**PRD Ref**: §4.1 Core Memory — Memory Blocks
+
+- [ ] `MemoryBlockStore` class
+- [ ] `get(agentId, label)` — retrieve block by agent + label
+- [ ] `set(agentId, label, value)` — create or update block
+- [ ] Optimistic locking via `version` column (reject if version mismatch)
+- [ ] `readOnly` enforcement: reject writes to readOnly blocks
+- [ ] Character limit validation: `value.length <= limit`
+- [ ] Shared block support: blocks with `agentId = null` referenced by multiple agents
+- [ ] Shared block write: validate `!readOnly` before allowing updates
+- [ ] Blocks always prepended to system prompt (handled by ContextBuilder)
+
+### 3.5 Recall Memory (`@opc/memory/recall.ts`)
+
+**PRD Ref**: §4.2 Recall Memory — Conversation History
+
+- [ ] `RecallMemory` class
+- [ ] `write(message)` — synchronous SQL insert + asynchronous vector embedding (non-blocking)
+- [ ] Role-based embedding format:
+  - [ ] `user` → `{"content": "user message text"}`
+  - [ ] `assistant + tool_call` → `{"thinking": "CoT", "content": "reply"}`
+  - [ ] `tool result` → `{"tool_call": "...", "tool_result": "..."}`
+  - [ ] `system` → skipped (not embedded)
+- [ ] Content hash dedup: MD5 hash to prevent duplicate entries
+- [ ] Semantic threshold dedup (cosine similarity > 0.7 = duplicate)
+
+### 3.6 Hybrid Search (`@opc/memory/hybrid-search.ts`)
+
+**PRD Ref**: §4.2 Retrieval — Hybrid strategy
+
+- [ ] `vectorSearch(query, k)` — sqlite-vec cosine similarity
+- [ ] `bm25Search(query, k)` — FTS5 BM25 scoring
+- [ ] `fuse(vectorResults, bm25Results, k)` — Reciprocal Rank Fusion (RRF, k=60)
+- [ ] RRF formula: `score = sum(1 / (k + rank_i))`
+- [ ] Configurable weight split (default: 70% vector, 30% BM25 via RRF)
+
+### 3.7 Namespace ACL (`@opc/memory/acl.ts`)
+
+**PRD Ref**: §4.4 Hierarchical Access Control
+
+- [ ] `MemoryACL` class
+- [ ] Namespace structure: `/org/agent/{agentId}/{tier}` (core, recall, semantic)
+- [ ] Shared namespace: `/org/shared/{blockLabel}`
+- [ ] Permission: own namespace — full read/write
+- [ ] Permission: child namespace — read + write (superior reads/directs subordinate)
+- [ ] Permission: parent namespace — no access
+- [ ] Permission: sibling namespace — configurable via `shareWith`
+- [ ] Permission: shared blocks — read if referenced, write if `!readOnly`
+- [ ] `checkPermission(requesterAgentId, targetAgentId, operation, tier)` → boolean
+- [ ] Enforce ACL as middleware wrapping all memory reads/writes
+
+### 3.8 Provenance Tracking (`@opc/memory/provenance.ts`)
+
+**PRD Ref**: §4.5 Provenance Tracking
+
+- [ ] `ProvenanceTracker` class
+- [ ] `attach(entryId, entryType, metadata)` — attach provenance to any memory entry
+- [ ] Provenance fields: author, taskId, threadId, timestamp, parentTaskId, source (agent|consolidation|human|system), contentHash
+- [ ] `query(filters)` — search provenance by author, taskId, threadId, time range
+- [ ] Content hash generation (MD5)
+
+### 3.9 Memory System Facade (`@opc/memory/index.ts`)
+
+- [ ] `MemorySystem` class: unified init, getBlockStore, getRecall, getACL, getProvenance
+- [ ] Config-driven initialization (SQLite by default)
+
+### 3.10 Tests — Phase 3
+
+- [ ] `blocks.test.ts` — CRUD operations
+- [ ] `blocks.test.ts` — optimistic lock conflict detection
+- [ ] `blocks.test.ts` — readOnly enforcement
+- [ ] `blocks.test.ts` — shared block reads + writes
+- [ ] `blocks.test.ts` — character limit validation
+- [ ] `recall.test.ts` — dual-write (SQL + vector) correctness
+- [ ] `recall.test.ts` — hybrid search returns relevant results
+- [ ] `recall.test.ts` — content hash dedup
+- [ ] `recall.test.ts` — role-based embedding format
+- [ ] `hybrid-search.test.ts` — RRF fusion ranking quality
+- [ ] `hybrid-search.test.ts` — combined outperforms either alone on synthetic queries
+- [ ] `acl.test.ts` — self read/write: allowed
+- [ ] `acl.test.ts` — child read/write: allowed
+- [ ] `acl.test.ts` — parent read/write: denied
+- [ ] `acl.test.ts` — sibling without shareWith: denied
+- [ ] `acl.test.ts` — sibling with shareWith: allowed
+- [ ] `acl.test.ts` — shared block read (referenced): allowed
+- [ ] `acl.test.ts` — shared block write (!readOnly): allowed
+- [ ] `acl.test.ts` — shared block write (readOnly): denied
+- [ ] `provenance.test.ts` — metadata attachment + querying
+- [ ] `sqlite.test.ts` — schema creation, migrations, all CRUD operations
 
 ---
 
 ## Phase 4: Orchestration Engine
 
-**Goal**: The delegate tool, multi-layer orchestration, context assembly, event bus.
+**PRD Ref**: §1 Core Architecture (N-Layer), §5 Context Engineering, §6 Message Routing
 
-**Estimated Complexity**: High (~2 weeks)
+**Goal**: delegate tool, multi-layer orchestration, context assembly, event bus.
 
 **Depends on**: Phase 1 (types, registry), Phase 3 (memory)
 
-### Technical Decisions
-- **Agent execution**: Claude Agent SDK `query()` function
-- **Concurrency**: `Promise.allSettled()` for parallel delegation with configurable max concurrency via semaphore
-- **Result compression**: Claude Haiku for summarizing results >2000 tokens
-- **Event system**: Node.js EventEmitter-based EventBus (simple, no external deps)
+### 4.1 Task Router (`@opc/core/router.ts`)
 
-### File Breakdown
+- [ ] `TaskRouter` class
+- [ ] `route(parentAgentId, targetAgentId)` — validate parent→child relationship
+- [ ] Reject: delegation to non-child (sibling, grandchild, ancestor)
+- [ ] Uses registry adjacency graph
 
-```
-packages/
-  core/
-    src/
-      orchestrator.ts              # Orchestrator class:
-                                   #   - execute(task): entry point, creates root query
-                                   #   - delegate(parentSession, targetAgentId, task): validate
-                                   #     route, create child session, run query(), compress result
-                                   #   - Session tracking: Map<sessionId, SessionState>
-                                   #   - Concurrency control: semaphore (maxConcurrentAgents)
-                                   #   - Depth tracking: reject if > maxHierarchyDepth
-                                   #   - Timeout enforcement per task
-      router.ts                    # TaskRouter class:
-                                   #   - route(parentAgentId, targetAgentId): validate parent-child
-                                   #   - Uses registry adjacency graph
-      context-builder.ts           # ContextBuilder class:
-                                   #   - build(agentId, task): assemble full context
-                                   #   - write(): system prompt + core blocks + org structure
-                                   #   - select(): recall search + semantic search + parent task
-                                   #   - compress(): token budget enforcement, summarize if needed
-                                   #   - isolate(): independent window, sibling invisible
-      event-bus.ts                 # EventBus class:
-                                   #   - emit(event): publish to subscribers
-                                   #   - on(eventType, handler): subscribe
-                                   #   - Events: SubagentStart, SubagentStop, TaskDelegated,
-                                   #     TaskCompleted, TaskFailed, MemoryUpdated
+### 4.2 Orchestrator (`@opc/core/orchestrator.ts`)
 
-  tools/
-    package.json                   # @opc/tools
-    tsconfig.json
-    tsup.config.ts
-    src/
-      delegate.ts                  # delegate MCP tool definition:
-                                   #   - Input: targetAgentId, taskDescription
-                                   #   - Validates route via router
-                                   #   - Calls orchestrator.delegate()
-                                   #   - Returns compressed result string
-      delegate-parallel.ts         # delegateParallel MCP tool:
-                                   #   - Input: Array<{agentId, task}>
-                                   #   - Runs Promise.allSettled on multiple delegate calls
-                                   #   - Returns aggregated results
-      memory-replace.ts            # memory_replace tool: block label + old + new text
-      memory-insert.ts             # memory_insert tool: block label + text to append
-      memory-read.ts               # memory_read tool: search query -> recall + semantic results
-      escalate.ts                  # escalate tool: type + reason + partialResult -> parent
-      human-approval.ts            # human_approval tool: question + options -> wait for human
-      index.ts
-    __tests__/
-      delegate.test.ts             # Route validation, result compression, timeout
-      orchestrator.test.ts         # Multi-layer chains, concurrency limits, depth limits
-      context-builder.test.ts      # W/S/C/I pipeline, token budgets
-```
+**PRD Ref**: §1 Recursive query() calls, §6 Task Lifecycle
 
-### Key Implementation Details
-- **Delegate as tool**: Defined as an MCP tool schema. When called, the framework intercepts it and routes through Orchestrator rather than executing as a regular tool
-- **Session management**: Each `query()` gets a unique sessionId. Orchestrator tracks active sessions for cleanup on timeout
-- **Result compression**: If child result > `resultCompressionThreshold` tokens, call Haiku with "Summarize this result: ..." before returning to parent
-- **Context budget**: ContextBuilder allocates token budget — e.g., 60% for system+blocks, 20% for recall, 10% for semantic, 10% buffer
+- [ ] `Orchestrator` class
+- [ ] `execute(task)` — entry point, creates root `query()` session
+- [ ] `delegate(parentSession, targetAgentId, taskDescription)` — validate route → create child session → run `query()` → compress result → return
+- [ ] Session tracking: `Map<sessionId, SessionState>`
+- [ ] Concurrency control: semaphore limiting `maxConcurrentAgents`
+- [ ] Depth tracking: reject if depth > `maxHierarchyDepth`
+- [ ] Timeout enforcement per task (`taskTimeout` config)
+- [ ] Task lifecycle states: `CREATED → ASSIGNED → DELEGATED → EXECUTING → RESULT_PROPAGATING → COMPLETED/FAILED`
+- [ ] Result compression: if child result > `resultCompressionThreshold` tokens, summarize with fast model (Haiku)
 
-### Testing Strategy
-- Unit: delegate route validation (valid child, invalid sibling, invalid grandchild)
-- Unit: ContextBuilder W/S/C/I pipeline produces expected context shape
-- Integration: 3-layer delegation chain (mock agents) — CEO -> VP -> Dev
-- Concurrency: verify maxConcurrentAgents limit is enforced
-- Timeout: verify tasks are killed after taskTimeout
-- Result compression: verify large results are summarized
+### 4.3 Context Builder (`@opc/core/context-builder.ts`)
 
-### Exit Criteria
-- [ ] Single delegate call works end-to-end
-- [ ] 3-layer delegation chain completes successfully
-- [ ] Parallel delegation works with concurrency limits
-- [ ] Context builder produces well-structured context within token budgets
-- [ ] EventBus emits events for all lifecycle stages
+**PRD Ref**: §5 Context Engineering — Write/Select/Compress/Isolate
+
+- [ ] `ContextBuilder` class
+- [ ] **Write** (static injection):
+  - [ ] System prompt from `agents/{id}/prompt.md`
+  - [ ] Core Memory blocks prepended (always visible)
+  - [ ] Org structure injection: "You are {role}, your superior is {parent.role}, your subordinates are {children}"
+- [ ] **Select** (dynamic retrieval):
+  - [ ] Recall Memory: hybrid search using task description, top-5
+  - [ ] Semantic Memory: relevant fact retrieval
+  - [ ] Parent task instructions: specific task from `delegate` call
+- [ ] **Compress** (window fitting):
+  - [ ] Core blocks retained in full (constrained by per-block limits)
+  - [ ] Recall results summarized if exceeding token budget
+  - [ ] Only pass direct parent instructions, NOT full ancestor chain
+- [ ] **Isolate** (security boundaries):
+  - [ ] Each `query()` has independent context window
+  - [ ] Sibling agents invisible to each other (unless `shareWith`)
+  - [ ] Child results > 2000 tokens summarized before returning to parent
+
+### 4.4 Event Bus (`@opc/core/event-bus.ts`)
+
+- [ ] `EventBus` class (Node.js EventEmitter-based)
+- [ ] Event types: `SubagentStart`, `SubagentStop`, `TaskDelegated`, `TaskCompleted`, `TaskFailed`, `MemoryUpdated`
+- [ ] `emit(event)` — publish to subscribers
+- [ ] `on(eventType, handler)` — subscribe
+- [ ] Hook into orchestrator lifecycle (start/stop/delegate/complete/fail)
+
+### 4.5 Tools (`@opc/tools`)
+
+**PRD Ref**: §1 delegate MCP tool, §4.1 memory self-edit tools, §6 escalation
+
+- [ ] `delegate` MCP tool — input: targetAgentId + taskDescription → validate route → orchestrator.delegate() → return compressed result
+- [ ] `delegateParallel` MCP tool — input: Array<{agentId, task}> → Promise.allSettled on multiple delegate calls → aggregated results
+- [ ] `memory_replace(block_label, old_text, new_text)` — precise replacement in Core Memory block
+- [ ] `memory_insert(block_label, new_text)` — append content to Core Memory block
+- [ ] `memory_read(query)` — search Recall + Semantic memory, ACL-filtered
+- [ ] `escalate(type, reason, partialResult)` — structured return to parent (error|timeout|uncertainty|approval_needed)
+- [ ] `human_approval(question, options)` — pause execution, wait for human response
+
+### 4.6 Tests — Phase 4
+
+- [ ] `router.test.ts` — valid child delegation: allowed
+- [ ] `router.test.ts` — sibling/grandchild/ancestor delegation: rejected
+- [ ] `orchestrator.test.ts` — single delegate call works end-to-end
+- [ ] `orchestrator.test.ts` — 3-layer chain: CEO → VP → Dev completes
+- [ ] `orchestrator.test.ts` — concurrency limit enforced (maxConcurrentAgents)
+- [ ] `orchestrator.test.ts` — timeout kills stalled tasks
+- [ ] `orchestrator.test.ts` — result compression triggers for large results
+- [ ] `orchestrator.test.ts` — task lifecycle state transitions correct
+- [ ] `context-builder.test.ts` — Write stage: system prompt + blocks + org structure present
+- [ ] `context-builder.test.ts` — Select stage: recall + semantic results included
+- [ ] `context-builder.test.ts` — Compress stage: oversized recall summarized
+- [ ] `context-builder.test.ts` — Isolate stage: sibling data excluded
+- [ ] `delegate.test.ts` — tool schema validates input correctly
+- [ ] `delegate-parallel.test.ts` — parallel delegation with partial failures
 
 ---
 
 ## Phase 5: Semantic Memory + Consolidation
 
+**PRD Ref**: §4.3 Semantic Memory, §4.6 Sleep-time Consolidation
+
 **Goal**: Fact extraction pipeline, dedup, graph memory, sleep-time consolidation.
 
-**Estimated Complexity**: High (~1.5 weeks)
+**Depends on**: Phase 3 (memory, embedding, SQLite adapter)
 
-**Depends on**: Phase 3 (memory system, embedding, SQLite)
+### 5.1 Semantic Memory (`@opc/memory/semantic.ts`)
 
-### Technical Decisions
-- **Fact extraction**: LLM-based (Claude Haiku for cost efficiency) with structured output
-- **Graph storage**: SQLite relational tables by default (entities + relationships tables); Neo4j adapter optional
-- **Bi-temporal tracking**: `valid_time` (when fact was true) + `recorded_time` (when stored)
-- **Consolidation schedule**: Triggered after N interactions via counter, runs as async task
+**PRD Ref**: §4.3 Fact Extraction — Mem0-style 5-stage pipeline
 
-### File Breakdown
+- [ ] `SemanticMemory` class
+- [ ] **Stage 1 — Fact Extraction**: LLM extracts atomic facts from conversations (preferences, decisions, entity info)
+- [ ] **Stage 2 — Embedding**: vectorize each extracted fact
+- [ ] **Stage 3 — Conflict Detection**: top-10 similarity search against existing semantic memory
+- [ ] **Stage 4 — Action Decision**: LLM determines `ADD` / `UPDATE` / `DELETE` / `NOOP` per fact
+- [ ] **Stage 5 — Parallel Write**: simultaneously write to Vector DB + optional Graph DB
+- [ ] Dedup layer 1: content hash check
+- [ ] Dedup layer 2: semantic threshold (cosine similarity > 0.7)
+- [ ] Dedup layer 3: LLM judgment (ADD/UPDATE/DELETE)
+- [ ] Dedup layer 4: scope-based (same agent namespace)
 
-```
-packages/
-  memory/
-    src/
-      semantic.ts                  # SemanticMemory class:
-                                   #   - extract(conversation): LLM fact extraction
-                                   #   - store(facts): embed + conflict detect + write
-                                   #   - search(query): vector similarity search
-                                   #   - 5-stage pipeline: extract -> embed -> conflict ->
-                                   #     decide (ADD/UPDATE/DELETE/NOOP) -> write
-                                   #   - Dedup: content hash -> semantic threshold (0.7) ->
-                                   #     LLM judgment
-      graph.ts                     # GraphMemory class:
-                                   #   - addEntity(name, type, embedding): create node
-                                   #   - addRelation(source, target, type): create edge
-                                   #   - search(query): BM25 rerank on graph triples
-                                   #   - Default: SQLite tables (entities, relationships)
-                                   #   - Optional: Neo4j adapter
-      consolidator.ts              # SleepTimeConsolidator class:
-                                   #   - shouldRun(agentId): check interaction counter
-                                   #   - run(agentId): process unprocessed recall entries
-                                   #     1. Fetch unprocessed recall messages
-                                   #     2. Run fact extraction pipeline
-                                   #     3. Reflect on core memory blocks, suggest updates
-                                   #     4. Mark entries as processed
-                                   #   - Uses low-cost model (Haiku)
-    __tests__/
-      semantic.test.ts             # Fact extraction quality, conflict resolution, dedup
-      graph.test.ts                # Entity/relation CRUD, triple search
-      consolidator.test.ts         # Trigger logic, full consolidation flow
-```
+### 5.2 Bi-temporal Tracking
 
-### Testing Strategy
-- Fact extraction: test with synthetic conversations, verify extracted facts are accurate
-- Conflict resolution: test ADD/UPDATE/DELETE decisions against known scenarios
-- Dedup: verify 4-layer dedup catches duplicates at each level
-- Graph: entity/relation CRUD, search returns relevant triples
-- Consolidation: end-to-end — insert recall entries, trigger consolidation, verify semantic memory populated
+**PRD Ref**: §4.3 Time awareness (inspired by Zep)
 
-### Exit Criteria
-- [ ] Fact extraction produces reasonable atomic facts from conversations
-- [ ] Conflict resolution correctly handles ADD/UPDATE/DELETE
-- [ ] Dedup prevents duplicate facts across all 4 layers
-- [ ] Graph memory stores and searches entity-relationship triples
-- [ ] Sleep-time consolidator processes backlog and updates core memory
+- [ ] `valid_time` field: when the fact was true in the real world
+- [ ] `recorded_time` field: when the fact was stored in memory
+- [ ] Temporal queries: "what was true at time T?" using valid_time
+
+### 5.3 Graph Memory (`@opc/memory/graph.ts`)
+
+**PRD Ref**: §4.3 Graph Memory (optional)
+
+- [ ] `GraphMemory` class
+- [ ] `addEntity(name, type, embedding, agentId)` — create entity node
+- [ ] `addRelation(source, target, type)` — create typed edge (LIVES_IN, PREFERS, DEPENDS_ON, etc.)
+- [ ] `search(query)` — BM25 reranking on graph triples
+- [ ] Default implementation: SQLite relational tables (`entities` + `relationships`)
+- [ ] Schema: `entities` table (id, name, type, embedding, agentId, createdAt, updatedAt)
+- [ ] Schema: `relationships` table (id, sourceId, targetId, type, properties, createdAt)
+
+### 5.4 Sleep-time Consolidator (`@opc/memory/consolidator.ts`)
+
+**PRD Ref**: §4.6 Sleep-time Consolidation
+
+- [ ] `SleepTimeConsolidator` class
+- [ ] Trigger: every N agent interactions (configurable via `consolidation.frequency`, default 5)
+- [ ] Executor: independent consolidation agent using low-cost model (`consolidation.model`, default Haiku)
+- [ ] Step 1: read recent unprocessed messages from agent's Recall memory
+- [ ] Step 2: run Mem0-style fact extraction pipeline → write to Semantic Memory
+- [ ] Step 3: reflect on current Core Memory blocks → generate update suggestions → auto-apply
+- [ ] Step 4: mark processed Recall entries (`processed = true`)
+- [ ] Runs as async background task (non-blocking)
+
+### 5.5 Tests — Phase 5
+
+- [ ] `semantic.test.ts` — fact extraction produces reasonable atomic facts from synthetic conversations
+- [ ] `semantic.test.ts` — conflict resolution: ADD for new facts
+- [ ] `semantic.test.ts` — conflict resolution: UPDATE for contradicting facts
+- [ ] `semantic.test.ts` — conflict resolution: DELETE for outdated facts
+- [ ] `semantic.test.ts` — 4-layer dedup catches duplicates at each level
+- [ ] `semantic.test.ts` — bi-temporal queries return correct temporal slices
+- [ ] `graph.test.ts` — entity CRUD
+- [ ] `graph.test.ts` — relationship CRUD
+- [ ] `graph.test.ts` — triple search returns relevant results
+- [ ] `consolidator.test.ts` — trigger logic (fires after N interactions, not before)
+- [ ] `consolidator.test.ts` — full consolidation flow: recall → extract → semantic + core updates
 
 ---
 
 ## Phase 6: Communication Integration
 
-**Goal**: Chat SDK gateway, streaming bridge, JSX cards, webhook server.
+**PRD Ref**: §3 Communication Layer — Vercel Chat SDK Integration
 
-**Estimated Complexity**: Medium (~1 week)
+**Goal**: Chat SDK gateway, streaming bridge, JSX cards, webhook server.
 
 **Depends on**: Phase 4 (orchestrator, event bus)
 
-### Technical Decisions
-- **Chat SDK**: Vercel Chat SDK (`@vercel/chat-sdk` or equivalent)
-- **Webhook server**: Next.js API routes (consistent with dashboard)
-- **JSX cards**: React components rendered to platform-specific formats
-- **Streaming**: AsyncGenerator-to-AsyncIterable bridge
+### 6.1 Chat Gateway (`@opc/gateway/chat-gateway.ts`)
 
-### File Breakdown
+**PRD Ref**: §3 Chat SDK event handling
 
-```
-packages/
-  gateway/
-    package.json                   # @opc/gateway
-    tsconfig.json
-    src/
-      chat-gateway.ts              # ChatGateway class:
-                                   #   - onNewMention(event): route to root agent
-                                   #   - onSubscribedMessage(event): restore session
-                                   #   - onAction(event): handle button clicks
-                                   #   - onSlashCommand(event): /status, /agents, etc.
-                                   #   - Session restore from thread context
-      stream-bridge.ts             # StreamBridge:
-                                   #   - bridge(queryGenerator): AsyncGenerator -> AsyncIterable
-                                   #   - Handles backpressure
-                                   #   - Error propagation
-      cards/
-        status-card.tsx            # Task status card with progress
-        approval-card.tsx          # Approval request with Accept/Reject buttons
-        agent-tree-card.tsx        # Compact agent hierarchy view
-      index.ts
-    __tests__/
-      chat-gateway.test.ts         # Event routing, session management
-      stream-bridge.test.ts        # Streaming correctness, backpressure
+- [ ] `ChatGateway` class
+- [ ] `onNewMention(event)` — new conversation, route to root agent
+- [ ] `onSubscribedMessage(event)` — follow-up message, restore existing session
+- [ ] `onAction(event)` — button interactions (approvals, cancellations)
+- [ ] `onSlashCommand(event)` — handle `/status`, `/agents`, etc.
+- [ ] Session restore from thread context
 
-apps/
-  server/
-    package.json
-    src/app/api/
-      slack/route.ts               # Slack webhook handler -> ChatGateway
-      discord/route.ts             # Discord webhook handler -> ChatGateway
-```
+### 6.2 Stream Bridge (`@opc/gateway/stream-bridge.ts`)
 
-### Testing Strategy
-- Unit: ChatGateway routes events to correct handlers
-- Unit: StreamBridge converts AsyncGenerator to AsyncIterable correctly
-- Integration: simulate incoming webhook -> gateway -> orchestrator -> stream response
+**PRD Ref**: §3 Streaming output
 
-### Exit Criteria
-- [ ] Gateway handles all event types (mention, message, action, slash command)
-- [ ] Stream bridge delivers real-time responses
-- [ ] JSX cards render correctly
-- [ ] Webhook routes process platform-specific payloads
+- [ ] `StreamBridge` class
+- [ ] `bridge(queryGenerator)` — `query()` AsyncGenerator → AsyncIterable<string>
+- [ ] Backpressure handling
+- [ ] Error propagation from agent to chat stream
+- [ ] Integration with `thread.post()` native streaming
+
+### 6.3 JSX Card Components (`@opc/gateway/cards/`)
+
+- [ ] `status-card.tsx` — task status with progress indicator
+- [ ] `approval-card.tsx` — approval request with Accept/Reject buttons → `onAction` handler
+- [ ] `agent-tree-card.tsx` — compact agent hierarchy view
+
+### 6.4 Webhook Server (`apps/server/`)
+
+- [ ] Next.js API route: `slack/route.ts` — Slack webhook → ChatGateway
+- [ ] Next.js API route: `discord/route.ts` — Discord webhook → ChatGateway
+- [ ] Platform-specific payload parsing
+
+### 6.5 Tests — Phase 6
+
+- [ ] `chat-gateway.test.ts` — event routing: mention → root agent
+- [ ] `chat-gateway.test.ts` — event routing: subscribed message → session restore
+- [ ] `chat-gateway.test.ts` — event routing: action → handler
+- [ ] `chat-gateway.test.ts` — event routing: slash command → handler
+- [ ] `stream-bridge.test.ts` — AsyncGenerator to AsyncIterable conversion
+- [ ] `stream-bridge.test.ts` — backpressure handling
+- [ ] `stream-bridge.test.ts` — error propagation
+- [ ] Integration: webhook → gateway → orchestrator → stream response
 
 ---
 
 ## Phase 7: Web UI Dashboard
 
-**Goal**: Full dashboard with agent tree, task flow, memory viewer, config editor, logs.
+**PRD Ref**: §7 Web UI Dashboard
 
-**Estimated Complexity**: High (~2 weeks)
+**Goal**: Full dashboard with all pages, real-time updates.
 
-**Depends on**: Phase 4 (event bus), Phase 3 (memory), Phase 1 (config)
+**Depends on**: Phase 3 (memory), Phase 4 (event bus, orchestrator)
 
-### Technical Decisions
-- **Framework**: Next.js 15 (App Router)
-- **UI components**: shadcn/ui (accessible, composable) + BaseUI (data-heavy components)
-- **Graph visualization**: React Flow (agent tree + task flow)
-- **Real-time**: WebSocket via EventBus subscription
-- **State management**: React Query / SWR for server state
-- **Code editor**: Monaco Editor for YAML config editing
+### 7.1 Project Setup (`apps/dashboard/`)
 
-### File Breakdown
+- [ ] Next.js 15 (App Router) setup
+- [ ] shadcn/ui + BaseUI component library integration
+- [ ] Tailwind CSS configuration
+- [ ] React Flow dependency
+- [ ] WebSocket client for EventBus
 
-```
-apps/
-  dashboard/
-    package.json
-    next.config.ts
-    tailwind.config.ts
-    src/
-      app/
-        layout.tsx                 # Root layout with sidebar navigation
-        page.tsx                   # Dashboard overview: active tasks, agent status, timeline
-        agents/
-          page.tsx                 # Agent Tree: React Flow interactive hierarchy
-        tasks/
-          page.tsx                 # Task Flow: real-time delegation chain visualization
-        memory/
-          page.tsx                 # Memory Viewer: tabs for Core/Recall/Semantic/Graph
-        config/
-          page.tsx                 # Config Editor: Monaco YAML editor + schema validation
-        logs/
-          page.tsx                 # Logs: filterable log aggregation
-        privacy/
-          page.tsx                 # Privacy Dashboard: masking stats, vault status
-      components/
-        sidebar.tsx                # Navigation sidebar
-        agent-node.tsx             # React Flow custom node for agents
-        task-node.tsx              # React Flow custom node for tasks
-        memory-block-editor.tsx    # Editable Core Memory block component
-        recall-search.tsx          # Recall memory search interface
-        semantic-list.tsx          # Semantic fact list with filters
-        log-viewer.tsx             # Log entries with filtering
-      hooks/
-        use-websocket.ts           # WebSocket connection to EventBus
-        use-agents.ts              # Agent data fetching
-        use-tasks.ts               # Task data fetching
-        use-memory.ts              # Memory data fetching
-      lib/
-        api.ts                     # API client for backend
-```
+### 7.2 Layout & Navigation
 
-### Testing Strategy
-- Component tests: render each page with mock data
-- Integration: WebSocket connection receives real-time events
-- E2E (optional): Playwright tests for critical flows
+- [ ] Root layout with sidebar navigation (`layout.tsx`)
+- [ ] Sidebar component linking to all pages
 
-### Exit Criteria
-- [ ] All 7 pages render with correct data
-- [ ] Agent tree is interactive (click to view details)
-- [ ] Task flow updates in real-time via WebSocket
-- [ ] Memory viewer allows browsing all three tiers
-- [ ] Config editor validates YAML against schema
+### 7.3 Dashboard Overview (`page.tsx`)
+
+**PRD Ref**: §7 Dashboard page
+
+- [ ] Active task count display
+- [ ] Agent status indicators (idle / busy / error)
+- [ ] Recent activity timeline
+
+### 7.4 Agent Tree (`agents/page.tsx`)
+
+**PRD Ref**: §7 Agent Tree page
+
+- [ ] React Flow interactive hierarchy graph
+- [ ] Custom agent nodes (`agent-node.tsx`) showing role, status, model
+- [ ] Click agent node → view details panel (config, current task, memory summary)
+- [ ] Real-time status updates via WebSocket
+
+### 7.5 Task Flow (`tasks/page.tsx`)
+
+**PRD Ref**: §7 Task Flow page
+
+- [ ] Real-time task delegation chain visualization
+- [ ] Custom task nodes (`task-node.tsx`) showing status, timing, agent
+- [ ] Show current execution position in chain
+- [ ] WebSocket-driven updates (TaskDelegated, TaskCompleted, TaskFailed events)
+
+### 7.6 Memory Viewer (`memory/page.tsx`)
+
+**PRD Ref**: §7 Memory Viewer page
+
+- [ ] Browse by agent selector
+- [ ] Tab: Core Memory block editor (`memory-block-editor.tsx`) — view/edit blocks
+- [ ] Tab: Recall Memory search (`recall-search.tsx`) — search query input + results
+- [ ] Tab: Semantic Memory fact list (`semantic-list.tsx`) — filterable list
+- [ ] Tab: Graph visualization (entity-relationship diagram, if graph enabled)
+
+### 7.7 Config Editor (`config/page.tsx`)
+
+**PRD Ref**: §7 Config Editor page
+
+- [ ] Monaco Editor for YAML editing
+- [ ] Schema validation (Zod) with inline error display
+- [ ] Hierarchy preview (live React Flow mini-graph)
+
+### 7.8 Logs (`logs/page.tsx`)
+
+**PRD Ref**: §7 Logs page
+
+- [ ] Aggregated logs from all agent executions
+- [ ] Filter by: task ID, agent ID, time range
+- [ ] Log viewer component (`log-viewer.tsx`)
+
+### 7.9 Privacy Dashboard (`privacy/page.tsx`)
+
+**PRD Ref**: §4 Privacy Gateway (monitoring)
+
+- [ ] Masking statistics (count by PII type)
+- [ ] Vault status (active sessions, mapping counts)
+- [ ] Detection logs (recent detections with type + confidence)
+
+### 7.10 Real-time Data Flow
+
+**PRD Ref**: §7 Real-time Data Flow
+
+- [ ] `use-websocket.ts` hook — WebSocket connection to EventBus
+- [ ] `use-agents.ts` hook — agent data fetching + real-time updates
+- [ ] `use-tasks.ts` hook — task data fetching + real-time updates
+- [ ] `use-memory.ts` hook — memory data fetching
+- [ ] `lib/api.ts` — API client for backend
+
+### 7.11 Tests — Phase 7
+
+- [ ] Component tests: each page renders with mock data
+- [ ] WebSocket integration: connection receives real-time events
+- [ ] E2E (optional): Playwright tests for critical flows (view agent, search memory, edit config)
 
 ---
 
 ## Phase 8: Production Hardening
 
-**Goal**: Production-grade storage adapters, containerization, docs, CI/CD.
+**PRD Ref**: §10 Implementation Steps — Phase 8
 
-**Estimated Complexity**: Medium (~1 week)
+**Goal**: Production-grade adapters, containerization, documentation, CI/CD.
 
 **Depends on**: All previous phases
 
-### Technical Decisions
-- **Postgres**: `pg` + `pgvector` extension for vector search, native FTS for BM25
-- **Neo4j**: Official `neo4j-driver` for full graph capabilities
-- **Container**: Docker Compose with profiles (dev: SQLite, prod: Postgres+Neo4j)
-- **CI/CD**: GitHub Actions (lint, test, build, publish)
+### 8.1 Postgres Adapter (`@opc/memory/adapters/postgres.ts`)
 
-### File Breakdown
+- [ ] `PostgresAdapter` class using `pg`
+- [ ] pgvector extension for vector similarity search
+- [ ] Native FTS for BM25 search
+- [ ] All memory operations: blocks, recall, semantic, provenance
+- [ ] Passes same test suite as SQLite adapter
 
-```
-packages/
-  memory/
-    src/
-      adapters/
-        postgres.ts                # PostgresAdapter: pgvector + FTS
-        neo4j.ts                   # Neo4jAdapter: Cypher queries for graph memory
+### 8.2 Neo4j Adapter (`@opc/memory/adapters/neo4j.ts`)
 
-docker-compose.yml                 # Services: opc-server, dashboard, postgres, neo4j (profiles)
-Dockerfile                         # Multi-stage build for server + dashboard
+- [ ] `Neo4jAdapter` class using `neo4j-driver`
+- [ ] Cypher queries for entity/relationship CRUD
+- [ ] Full graph traversal capabilities
+- [ ] BM25 reranking on graph triples
 
-.github/
-  workflows/
-    ci.yml                         # Lint + test + build on PR
-    release.yml                    # Publish to npm on tag
+### 8.3 Containerization
 
-docs/
-  getting-started.md               # Quick start guide
-  configuration.md                 # Config reference
-  architecture.md                  # Architecture overview
-  deployment.md                    # Deployment guide
-```
+- [ ] `Dockerfile` — multi-stage build for server + dashboard
+- [ ] `docker-compose.yml` — services: opc-server, dashboard, postgres, neo4j
+- [ ] Docker Compose profiles: `dev` (SQLite), `prod` (Postgres + Neo4j)
+- [ ] Smoke test: `docker-compose up` starts all services
 
-### Testing Strategy
-- Postgres adapter: run against Docker Postgres with pgvector
-- Neo4j adapter: run against Docker Neo4j
-- Docker Compose: smoke test full stack startup
-- CI: all tests pass in CI environment
+### 8.4 CI/CD
 
-### Exit Criteria
-- [ ] Postgres adapter passes all memory tests
-- [ ] Neo4j adapter handles graph operations
-- [ ] Docker Compose starts all services
-- [ ] CI/CD pipeline runs successfully
-- [ ] Documentation covers setup, config, and deployment
+- [ ] `.github/workflows/ci.yml` — lint + test + build on PR
+- [ ] `.github/workflows/release.yml` — publish to npm on tag
+- [ ] All tests pass in CI environment
+
+### 8.5 Documentation
+
+- [ ] `docs/getting-started.md` — quick start guide
+- [ ] `docs/configuration.md` — full config reference
+- [ ] `docs/architecture.md` — architecture overview
+- [ ] `docs/deployment.md` — deployment guide (local, Docker, production)
+- [ ] Example configurations (minimal, full-featured)
+
+---
+
+## End-to-End Verification
+
+**PRD Ref**: §11 Verification Plan
+
+- [ ] **Privacy Gateway E2E**: PII detection accuracy covering all types + Vault consistency + streaming restoration + whitelist exclusion + code block conservative strategy
+- [ ] **ACL E2E**: Full combinatorial coverage of permission matrix (self/superior/subordinate/sibling × read/write × each tier)
+- [ ] **Memory Integration E2E**: block self-edit → recall dual-write + hybrid retrieval → fact extraction (ADD/UPDATE/DELETE) → dedup → consolidation → temporal axis queries
+- [ ] **Orchestration E2E**: 3-layer delegate chain (CEO → VP → Dev), message passing + result compression + parallel delegation
+- [ ] **Privacy + Orchestration E2E**: User message with PII → mask → 3-layer agent processing → restore → verify real data never appears in LLM API logs
+- [ ] **Pure Local E2E**: Offline environment + Ollama + SQLite, verify full pipeline runs with zero cloud dependencies
+- [ ] **Dashboard E2E**: Launch → trigger task → verify real-time updates / memory viewing / config editing / privacy statistics
 
 ---
 
 ## Dependency Graph
 
 ```
-Phase 1 (Foundation) ─────┬──> Phase 2 (Privacy)
-                          ├──> Phase 3 (Memory) ──────┬──> Phase 5 (Semantic + Consolidation)
-                          │                           │
-                          └──> Phase 4 (Orchestration) ┤
-                               (needs Phase 1 + 3)     ├──> Phase 6 (Communication)
+Phase 1 (Foundation) ─────┬──► Phase 2 (Privacy)
+                          ├──► Phase 3 (Memory) ──────┬──► Phase 5 (Semantic + Consolidation)
+                          │                            │
+                          └──► Phase 4 (Orchestration) ┤
+                               (needs Phase 1 + 3)     ├──► Phase 6 (Communication)
                                                        │    (needs Phase 4)
                                                        │
-                                                       ├──> Phase 7 (Dashboard)
+                                                       ├──► Phase 7 (Dashboard)
                                                        │    (needs Phase 3 + 4)
                                                        │
-                                                       └──> Phase 8 (Production)
+                                                       └──► Phase 8 (Production)
                                                             (needs all)
 ```
 
-**Parallelizable**: Phase 2 (Privacy) and Phase 3 (Memory) can run in parallel after Phase 1 completes.
+**Parallelizable**: Phase 2 (Privacy) and Phase 3 (Memory) can run in parallel after Phase 1.
 
 ---
 
 ## Summary
 
-| Phase | Description | Complexity | Est. Duration | Key Deliverables |
-|-------|------------|-----------|---------------|-----------------|
-| 1 | Foundation Skeleton | Low-Med | ~1 week | Monorepo, types, config, registry, CLI |
-| 2 | Privacy Gateway | Med-High | ~1.5 weeks | PII detection, vault, mask/unmask, streaming |
-| 3 | Memory System | High | ~2 weeks | Blocks, recall, hybrid search, ACL, provenance |
-| 4 | Orchestration Engine | High | ~2 weeks | Delegate, orchestrator, context builder, events |
-| 5 | Semantic + Consolidation | High | ~1.5 weeks | Fact extraction, dedup, graph, sleep-time |
-| 6 | Communication | Medium | ~1 week | Chat gateway, stream bridge, JSX cards |
-| 7 | Web UI Dashboard | High | ~2 weeks | 7 dashboard pages, real-time updates |
-| 8 | Production Hardening | Medium | ~1 week | Postgres, Neo4j, Docker, docs, CI/CD |
-| | **Total** | | **~12 weeks** | |
+| Phase | Checkboxes | Description |
+|-------|-----------|-------------|
+| 1 | 49 | Foundation: monorepo, types, config, registry, CLI |
+| 2 | 30 | Privacy: PII detection, vault, mask/unmask, streaming |
+| 3 | 45 | Memory: blocks, recall, hybrid search, ACL, provenance |
+| 4 | 34 | Orchestration: delegate, orchestrator, context builder, events |
+| 5 | 22 | Semantic: fact extraction, dedup, graph, consolidation |
+| 6 | 17 | Communication: chat gateway, stream bridge, JSX cards |
+| 7 | 26 | Dashboard: 7+ pages, real-time updates |
+| 8 | 13 | Production: Postgres, Neo4j, Docker, docs, CI/CD |
+| E2E | 7 | End-to-end verification plan |
+| **Total** | **~243** | |
